@@ -16,6 +16,7 @@ from django.conf import settings
 from events_bot.models import Event, Participant, Donation
 from yookassa import Payment, Configuration
 import uuid
+from django.utils import timezone
 
 CHOOSE_CUSTOM_AMOUNT = range(1)
 
@@ -239,6 +240,37 @@ def create_payment(update, context, amount):
             context.bot.send_message(chat_id, error_msg, parse_mode='HTML')
 
 
+def current_speaker(update, context):
+    event = Event.objects.filter(is_active=True).first()
+    if not event:
+        update.message.reply_text(
+            "📭 Сейчас нет активных мероприятий",
+            parse_mode='HTML'
+        )
+        return
+
+    now = timezone.now()
+    current_slot = event.get_current_speaker()
+
+    if current_slot:
+        speaker = current_slot.speaker
+        update.message.reply_text(
+            f"🎤 <b>Сейчас выступает:</b>\n\n"
+            f"👤 <b>{speaker.name}</b>\n"
+            f"📢 <i>{current_slot.title}</i>\n"
+            f"🕒 {current_slot.start_time.strftime('%H:%M')}-{current_slot.end_time.strftime('%H:%M')}\n\n"
+            f"{current_slot.description}\n\n"
+            f"ℹ️ {speaker.bio if speaker.bio else 'Нет дополнительной информации'}",
+            parse_mode='HTML'
+        )
+    else:
+        update.message.reply_text(
+            "⏳ <b>Сейчас перерыв или выступление не запланировано</b>\n\n"
+            "Следующее выступление смотрите в программе",
+            parse_mode='HTML'
+        )
+
+
 def setup_dispatcher(dp):
     # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
@@ -247,6 +279,7 @@ def setup_dispatcher(dp):
     # Обработчики текстовых сообщений (кнопки главного меню)
     dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
     dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
+    dp.add_handler(MessageHandler(Filters.regex('^Кто выступает сейчас\?$'), current_speaker))
     # тут будут обработчики для "Пообщаться" и "Задать вопрос"
 
     # Обработчики донатов
