@@ -140,12 +140,19 @@ class Donation(models.Model):
         decimal_places=2
     )
     timestamp = models.DateTimeField(auto_now_add=True)
+    payment_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True
+    )
+    is_confirmed = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-timestamp']
 
     def __str__(self):
-        return f"Донат {self.amount} от {self.participant.name}"
+        status = "✅" if self.is_confirmed else "⏳"
+        return f"{status} Донат {self.amount}₽ от {self.participant.name}"
 
 
 class ConnectionRequest(models.Model):
