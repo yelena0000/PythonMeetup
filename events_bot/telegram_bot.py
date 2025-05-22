@@ -6,11 +6,17 @@ from telegram.ext import (
     Filters,
     ConversationHandler
 )
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    BotCommand
+)
 from django.conf import settings
 from events_bot.models import Event, Participant, Donation
 from yookassa import Payment, Configuration
 import uuid
+from django.utils import timezone
 
 CHOOSE_CUSTOM_AMOUNT = range(1)
 
@@ -32,37 +38,64 @@ def start(update, context):
     event = Event.objects.filter(is_active=True).first()
     event_name = event.title if event else "Python Meetup"
 
+    # Главное меню с кнопками
+    main_menu_keyboard = [
+        ["📅 Программа", "🎁 Поддержать"],
+        ["🙋Пообщаться", "📋Задать вопрос спикеру"],
+        ["Кто выступает сейчас?"]
+    ]
+
     update.message.reply_text(
-        f"Привет! Я бот для {event_name}\n\n"
-        "Доступные команды:\n"
-        "/start - начало работы\n"
-        "/program - программа мероприятия\n"
-        "/donate - поддержать мероприятие"
+        f"✨ <b>Привет, {user.first_name}!</b> ✨\n\n"
+        f"Я бот для <i>{event_name}</i>\n"
+        "Выбери действие:",
+        reply_markup=ReplyKeyboardMarkup(
+            main_menu_keyboard,
+            resize_keyboard=True,
+            one_time_keyboard=False
+        ),
+        parse_mode='HTML'
     )
 
 
 def program(update, context):
     event = Event.objects.filter(is_active=True).first()
     if event:
-        update.message.reply_text(event.get_program())
+        program_text = event.get_program()
+        update.message.reply_text(
+            f"📜 <b>Программа мероприятия:</b>\n\n"
+            f"{program_text}\n\n"
+            f"<i>Ждем вас {event.date.strftime('%d.%m.%Y')}!</i>",
+            parse_mode='HTML'
+        )
     else:
-        update.message.reply_text("Сейчас нет активных мероприятий")
+        update.message.reply_text(
+            "📭 Сейчас нет активных мероприятий\n"
+            "Следите за анонсами!",
+            parse_mode='HTML'
+        )
 
 
 def donate(update, context):
     if not Event.objects.filter(is_active=True).exists():
-        update.message.reply_text("Сейчас нет активных мероприятий для доната")
+        update.message.reply_text(
+            "🙅‍♂️ <b>Сейчас нет активных мероприятий</b>\n"
+            "Донаты временно недоступны",
+            parse_mode='HTML'
+        )
         return
 
     keyboard = [
-        [InlineKeyboardButton("100 ₽", callback_data='donate_100')],
-        [InlineKeyboardButton("300 ₽", callback_data='donate_300')],
-        [InlineKeyboardButton("500 ₽", callback_data='donate_500')],
-        [InlineKeyboardButton("Другая сумма", callback_data='donate_custom')],
+        [InlineKeyboardButton("💵 100 ₽", callback_data='donate_100')],
+        [InlineKeyboardButton("💵 300 ₽", callback_data='donate_300')],
+        [InlineKeyboardButton("💵 500 ₽", callback_data='donate_500')],
+        [InlineKeyboardButton("✨ Другая сумма", callback_data='donate_custom')],
     ]
     update.message.reply_text(
-        "Выберите сумму доната:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "🎁 <b>Выберите сумму доната:</b>\n"
+        "Ваша поддержка помогает развивать комьюнити!",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
     )
 
 
@@ -71,14 +104,14 @@ def handle_fixed_donate_callback(update, context):
     query.answer()
 
     if not Event.objects.filter(is_active=True).exists():
-        query.edit_message_text("Сейчас нет активных мероприятий для доната")
+        query.edit_message_text("🙅‍♂️ Сейчас нет активных мероприятий для доната")
         return ConversationHandler.END
 
     try:
         amount = int(query.data.split('_')[1])
         create_payment(update, context, amount)
     except (IndexError, ValueError):
-        query.edit_message_text("Ошибка при обработке суммы.")
+        query.edit_message_text("❌ Ошибка при обработке суммы.")
     return ConversationHandler.END
 
 
@@ -87,10 +120,14 @@ def handle_custom_donate_callback(update, context):
     query.answer()
 
     if not Event.objects.filter(is_active=True).exists():
-        query.edit_message_text("Сейчас нет активных мероприятий для доната")
+        query.edit_message_text("🙅‍♂️ Сейчас нет активных мероприятий для доната")
         return ConversationHandler.END
 
-    query.edit_message_text("Введите сумму доната в рублях (от 10 до 15000):")
+    query.edit_message_text(
+        "💫 <b>Введите сумму доната в рублях</b>\n"
+        "(от 10 до 15000):",
+        parse_mode='HTML'
+    )
     return CHOOSE_CUSTOM_AMOUNT
 
 
@@ -98,24 +135,35 @@ def handle_custom_amount(update, context):
     try:
         amount = int(update.message.text.strip())
         if amount < 10 or amount > 15000:
-            update.message.reply_text("Сумма должна быть от 10 до 15000 ₽. Пожалуйста, введите корректную сумму:")
+            update.message.reply_text(
+                "⚠️ <b>Сумма должна быть от 10 до 15000 ₽</b>\n"
+                "Пожалуйста, введите корректную сумму:",
+                parse_mode='HTML'
+            )
             return CHOOSE_CUSTOM_AMOUNT
 
         create_payment(update, context, amount)
         return ConversationHandler.END
 
     except ValueError:
-        update.message.reply_text("Пожалуйста, введите число (например: 250):")
+        update.message.reply_text(
+            "🔢 <b>Пожалуйста, введите число</b>\n"
+            "Например: 250 или 1000",
+            parse_mode='HTML'
+        )
         return CHOOSE_CUSTOM_AMOUNT
 
 
 def cancel(update, context):
-    update.message.reply_text("Донат отменён.")
+    update.message.reply_text(
+        "❌ <b>Донат отменён</b>\n"
+        "Вы можете вернуться к этому позже",
+        parse_mode='HTML'
+    )
     return ConversationHandler.END
 
 
 def create_payment(update, context, amount):
-    # Определяем откуда пришел update (из сообщения или callback)
     if update.callback_query:
         user = update.callback_query.from_user
         chat_id = update.callback_query.message.chat_id
@@ -125,7 +173,7 @@ def create_payment(update, context, amount):
 
     event = Event.objects.filter(is_active=True).first()
     if not event:
-        error_msg = "Сейчас нет активных мероприятий для доната"
+        error_msg = "🙅‍♂️ Сейчас нет активных мероприятий для доната"
         if update.callback_query:
             update.callback_query.edit_message_text(error_msg)
         else:
@@ -163,23 +211,20 @@ def create_payment(update, context, amount):
         )
 
         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "💳 Оплатить",
+            "💳 Перейти к оплате",
             url=payment.confirmation.confirmation_url
         )]])
 
-        message = f"Ссылка для оплаты {amount}₽:"
+        message = f"<b>Оплата {amount}₽</b>\nНажмите кнопку ниже:"
         if update.callback_query:
-            update.callback_query.edit_message_text(message, reply_markup=reply_markup)
+            update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
         else:
-            context.bot.send_message(chat_id, message, reply_markup=reply_markup)
-
-        event = Event.objects.filter(is_active=True).first()
-        event_name = event.title if event else "Python Meetup"
+            context.bot.send_message(chat_id, message, reply_markup=reply_markup, parse_mode='HTML')
 
         context.bot.send_message(
             chat_id=chat_id,
-            text=f"✨<b>Благодарим за поддержку {event_name}!</b>\n\n"
-                 f"Твой донат {amount}₽ — это:\n"
+            text=f"✨ <b>Спасибо, что решили поддержать мероприятие, {user.first_name}!</b>\n\n"
+                 f"Ваш донат {amount}₽ — это:\n"
                  f"• ☕ 10 чашек кофе для спикеров\n"
                  f"• 📚 Новые материалы для участников\n"
                  f"• 💻 Лучшее оборудование для трансляций\n\n"
@@ -188,28 +233,62 @@ def create_payment(update, context, amount):
         )
 
     except Exception as e:
-        error_msg = f"Ошибка при создании платежа: {str(e)}"
+        error_msg = f"❌ <b>Ошибка при создании платежа</b>\n{str(e)}"
         if update.callback_query:
-            update.callback_query.edit_message_text(error_msg)
+            update.callback_query.edit_message_text(error_msg, parse_mode='HTML')
         else:
-            context.bot.send_message(chat_id, error_msg)
+            context.bot.send_message(chat_id, error_msg, parse_mode='HTML')
+
+
+def current_speaker(update, context):
+    event = Event.objects.filter(is_active=True).first()
+    if not event:
+        update.message.reply_text(
+            "📭 Сейчас нет активных мероприятий",
+            parse_mode='HTML'
+        )
+        return
+
+    now = timezone.now()
+    current_slot = event.get_current_speaker()
+
+    if current_slot:
+        speaker = current_slot.speaker
+        update.message.reply_text(
+            f"🎤 <b>Сейчас выступает:</b>\n\n"
+            f"👤 <b>{speaker.name}</b>\n"
+            f"📢 <i>{current_slot.title}</i>\n"
+            f"🕒 {current_slot.start_time.strftime('%H:%M')}-{current_slot.end_time.strftime('%H:%M')}\n\n"
+            f"{current_slot.description}\n\n"
+            f"ℹ️ {speaker.bio if speaker.bio else 'Нет дополнительной информации'}",
+            parse_mode='HTML'
+        )
+    else:
+        update.message.reply_text(
+            "⏳ <b>Сейчас перерыв или выступление не запланировано</b>\n\n"
+            "Следующее выступление смотрите в программе",
+            parse_mode='HTML'
+        )
 
 
 def setup_dispatcher(dp):
+    # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("program", program))
-    dp.add_handler(CommandHandler("donate", donate))
+    dp.add_handler(CommandHandler("help", start))  # Помощь тоже ведет в стартовое меню
 
+    # Обработчики текстовых сообщений (кнопки главного меню)
+    dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
+    dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
+    dp.add_handler(MessageHandler(Filters.regex('^Кто выступает сейчас\?$'), current_speaker))
+    # тут будут обработчики для "Пообщаться" и "Задать вопрос"
+
+    # Обработчики донатов
     dp.add_handler(CallbackQueryHandler(handle_fixed_donate_callback, pattern='^donate_\\d+$'))
 
     donate_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_custom_donate_callback, pattern='^donate_custom$')
-        ],
+        entry_points=[CallbackQueryHandler(handle_custom_donate_callback, pattern='^donate_custom$')],
         states={
-            CHOOSE_CUSTOM_AMOUNT: [
-                MessageHandler(Filters.text & ~Filters.command, handle_custom_amount)
-            ]
+            CHOOSE_CUSTOM_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_custom_amount)]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -222,7 +301,13 @@ def start_bot():
     updater = Updater(settings.TG_BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    dp = setup_dispatcher(dp)
+    updater.bot.set_my_commands([
+        BotCommand("start", "Главное меню"),
+        BotCommand("program", "Программа мероприятия"),
+        BotCommand("donate", "Поддержать мероприятие"),
+        BotCommand("help", "Помощь по боту")
+    ])
 
+    dp = setup_dispatcher(dp)
     updater.start_polling()
     updater.idle()
