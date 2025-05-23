@@ -48,7 +48,8 @@ class Speaker(models.Model):
     telegram_username = models.CharField(
         max_length=100,
         blank=True,
-        null=True
+        null=True,
+        unique=True
     )
     telegram_id = models.BigIntegerField(
         unique=True,

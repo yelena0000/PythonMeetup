@@ -73,11 +73,8 @@ def send_question(speaker_username, participant_id, participant_name, text):
 
     try:
         with transaction.atomic():
-            # Ищем спикера по telegram_username или telegram_id
-            speaker = Speaker.objects.get(
-                models.Q(telegram_username=speaker_username) |
-                models.Q(telegram_id=participant_id)
-            )
+            # Ищем спикера ТОЛЬКО по telegram_username
+            speaker = Speaker.objects.get(telegram_username=speaker_username)
 
             # Проверяем, что спикер привязан к активному мероприятию
             if not speaker.events.filter(is_active=True).exists():

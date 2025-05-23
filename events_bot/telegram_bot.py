@@ -341,6 +341,15 @@ def ask_speaker_select(update, context):
         return ConversationHandler.END
 
     speaker_username = query.data.split('_', 1)[1]
+
+    try:
+        speaker = Speaker.objects.get(telegram_username=speaker_username)
+        context.user_data['speaker_username'] = speaker_username
+        context.user_data['speaker_id'] = speaker.id  # Сохраняем ID для надежности
+    except Speaker.DoesNotExist:
+        query.edit_message_text("❌ Спикер не найден")
+        return ConversationHandler.END
+
     context.user_data['speaker_username'] = speaker_username
 
     query.edit_message_text(
@@ -374,11 +383,11 @@ def ask_speaker_confirm(update, context):
 
     if query.data == 'confirm':
         try:
-            # Получаем speaker_username из контекста
             speaker_username = context.user_data['speaker_username']
 
-            # Проверяем, что спикер существует и у него есть telegram_id
+            # Ищем спикера только по telegram_username
             speaker = Speaker.objects.get(telegram_username=speaker_username)
+
             if not speaker.telegram_id:
                 query.edit_message_text("❌ Ошибка: у спикера не указан Telegram ID")
                 return ConversationHandler.END
@@ -567,7 +576,24 @@ def setup_dispatcher(dp):
     # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", start))
-    dp.add_handler(CommandHandler("my_questions", show_unanswered_questions)) # обработчики для спикеров
+    dp.add_handler(CommandHandler("my_questions", show_unanswered_questions))
+
+    # Обработчики регистрации спикеров
+    registration_conv = ConversationHandler(
+        entry_points=[CommandHandler('register_speaker', register_speaker_start)],
+        states={
+            SELECTING_EVENT: [
+                CallbackQueryHandler(register_speaker_select_event, pattern='^event_'),
+                CallbackQueryHandler(register_speaker_confirm, pattern='^cancel$'),
+            ],
+            CONFIRMING_REGISTRATION: [
+                CallbackQueryHandler(register_speaker_confirm),
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    dp.add_handler(registration_conv)
 
     setup_speaker_handlers(dp)  # обработчики для спикеров
 
@@ -611,23 +637,6 @@ def setup_dispatcher(dp):
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     dp.add_handler(donate_conv_handler)
-
-    # Обработчики регистрации спикеров
-    registration_conv = ConversationHandler(
-        entry_points=[CommandHandler('register_speaker', register_speaker_start)],
-        states={
-            SELECTING_EVENT: [
-                CallbackQueryHandler(register_speaker_select_event, pattern='^event_'),
-                CallbackQueryHandler(register_speaker_confirm, pattern='^cancel$'),
-            ],
-            CONFIRMING_REGISTRATION: [
-                CallbackQueryHandler(register_speaker_confirm),
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    dp.add_handler(registration_conv)
 
     # Обработчики текстовых сообщений (кнопки главного меню)
     dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
