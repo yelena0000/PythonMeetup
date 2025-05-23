@@ -293,13 +293,19 @@ def current_speaker(update, context):
 
 
 def get_ask_speaker_keyboard(speakers):
-    """Клавиатура для выбора спикера"""
+    """Клавиатура для выбора спикера с отметкой текущего"""
     keyboard = []
+    event = Event.objects.filter(is_active=True).first()
+    current_speaker = event.get_current_speaker().speaker if event and event.get_current_speaker() else None
+
     for speaker in speakers:
         if speaker.telegram_username:
+            # Добавляем отметку если это текущий спикер
+            speaker_label = f"🎤 {speaker.name} (сейчас выступает)" if current_speaker and speaker.id == current_speaker.id else speaker.name
             keyboard.append(
-                [InlineKeyboardButton(speaker.name, callback_data=f"ask_{speaker.telegram_username}")]
+                [InlineKeyboardButton(speaker_label, callback_data=f"ask_{speaker.telegram_username}")]
             )
+
     keyboard.append([InlineKeyboardButton("Назад", callback_data='back')])
     return InlineKeyboardMarkup(keyboard)
 
@@ -392,12 +398,7 @@ def ask_speaker_cancel(update, context):
 def setup_dispatcher(dp):
     # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", start))  # Помощь тоже ведет в стартовое меню
-
-    # Обработчики текстовых сообщений (кнопки главного меню)
-    dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
-    dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
-    dp.add_handler(MessageHandler(Filters.regex('^Кто выступает сейчас\?$'), current_speaker))
+    dp.add_handler(CommandHandler("help", start))
 
     # Обработчики вопросов к спикерам
     ask_speaker_conv = ConversationHandler(
@@ -421,7 +422,9 @@ def setup_dispatcher(dp):
         fallbacks=[
             CommandHandler('cancel', ask_speaker_cancel),
             CallbackQueryHandler(ask_speaker_cancel, pattern='^cancel$'),
+            MessageHandler(Filters.regex('^📋Задать вопрос спикеру$'), ask_speaker_start),  # Добавлено для перезапуска
         ],
+        allow_reentry=True,
     )
 
     dp.add_handler(ask_speaker_conv)
@@ -437,6 +440,11 @@ def setup_dispatcher(dp):
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     dp.add_handler(donate_conv_handler)
+
+    # Обработчики текстовых сообщений (кнопки главного меню)
+    dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
+    dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
+    dp.add_handler(MessageHandler(Filters.regex('^Кто выступает сейчас\?$'), current_speaker))
 
     return dp
 
