@@ -10,7 +10,8 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
-    BotCommand
+    BotCommand,
+    Update
 )
 from django.conf import settings
 from events_bot.models import Event, Participant, Donation
@@ -18,11 +19,30 @@ from yookassa import Payment, Configuration
 import uuid
 from django.utils import timezone
 
-CHOOSE_CUSTOM_AMOUNT = range(1)
+from events_bot.views import get_staff_ids, send_question
+
+
+(
+    CHOOSE_CUSTOM_AMOUNT,
+
+    SELECTING_SPEAKER,
+    AWAITING_QUESTION,
+    CONFIRMING_QUESTION
+) = range(4)
 
 # Инициализация ЮKassa
 Configuration.account_id = settings.YOOKASSA_SHOP_ID
 Configuration.secret_key = settings.YOOKASSA_SECRET_KEY
+
+
+def get_main_keyboard():
+    """Кнопки главного меню"""
+    keyboard = [
+        ["📅 Программа", "🎁 Поддержать"],
+        ["🙋Пообщаться", "📋Задать вопрос спикеру"],
+        ["Кто выступает сейчас?"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
 def start(update, context):
@@ -271,6 +291,103 @@ def current_speaker(update, context):
         )
 
 
+def get_ask_speaker_keyboard(speakers):
+    """Клавиатура для выбора спикера"""
+    keyboard = []
+    for speaker in speakers:
+        if speaker.telegram_username:
+            keyboard.append(
+                [InlineKeyboardButton(speaker.name, callback_data=f"ask_{speaker.telegram_username}")]
+            )
+    keyboard.append([InlineKeyboardButton("Назад", callback_data='back')])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def ask_speaker_start(update, context):
+    """Начало процесса задания вопроса"""
+    event = Event.objects.filter(is_active=True).first()
+    if not event:
+        update.message.reply_text("Сейчас нет активных мероприятий")
+        return ConversationHandler.END
+
+    speakers = event.speakers.all()
+    if not speakers:
+        update.message.reply_text("На этом мероприятии нет спикеров")
+        return ConversationHandler.END
+
+    update.message.reply_text(
+        "Выберите спикера для вопроса:",
+        reply_markup=get_ask_speaker_keyboard(speakers)
+    )
+    return SELECTING_SPEAKER
+
+
+def ask_speaker_select(update, context):
+    """Обработка выбора спикера"""
+    query = update.callback_query
+    query.answer()
+
+    if query.data == 'back':
+        query.edit_message_text("Выберите действие:", reply_markup=get_main_keyboard())
+        return ConversationHandler.END
+
+    speaker_username = query.data.split('_', 1)[1]
+    context.user_data['speaker_username'] = speaker_username
+
+    query.edit_message_text(
+        "✍️ Введите ваш вопрос:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отмена", callback_data='cancel')]
+        ])
+    )
+    return AWAITING_QUESTION
+
+
+def ask_speaker_receive_question(update, context):
+    """Получение вопроса от пользователя"""
+    question_text = update.message.text
+    context.user_data['question_text'] = question_text
+
+    update.message.reply_text(
+        f"Подтвердите ваш вопрос:\n\n{question_text}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подтвердить", callback_data='confirm')],
+            [InlineKeyboardButton("❌ Отмена", callback_data='cancel')]
+        ])
+    )
+    return CONFIRMING_QUESTION
+
+
+def ask_speaker_confirm(update, context):
+    """Подтверждение вопроса"""
+    query = update.callback_query
+    query.answer()
+
+    if query.data == 'confirm':
+        try:
+            result = send_question(
+                speaker_username=context.user_data['speaker_username'],
+                participant_id=update.effective_user.id,
+                participant_name=update.effective_user.first_name,
+                text=context.user_data['question_text']
+            )
+            query.edit_message_text("✅ Вопрос успешно отправлен спикеру")
+        except Exception as e:
+            query.edit_message_text(f"❌ Ошибка при отправке вопроса: {str(e)}")
+    else:
+        query.edit_message_text("❌ Вопрос отменен")
+
+    return ConversationHandler.END
+
+
+def ask_speaker_cancel(update, context):
+    """Отмена вопроса"""
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text("❌ Вопрос отменен")
+    return ConversationHandler.END
+
+
 def setup_dispatcher(dp):
     # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
@@ -280,7 +397,33 @@ def setup_dispatcher(dp):
     dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
     dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
     dp.add_handler(MessageHandler(Filters.regex('^Кто выступает сейчас\?$'), current_speaker))
-    # тут будут обработчики для "Пообщаться" и "Задать вопрос"
+
+    # Обработчики вопросов к спикерам
+    ask_speaker_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(Filters.regex('^📋Задать вопрос спикеру$'), ask_speaker_start)
+        ],
+        states={
+            SELECTING_SPEAKER: [
+                CallbackQueryHandler(ask_speaker_select, pattern='^ask_'),
+                CallbackQueryHandler(ask_speaker_cancel, pattern='^back$'),
+            ],
+            AWAITING_QUESTION: [
+                MessageHandler(Filters.text & ~Filters.command, ask_speaker_receive_question),
+                CallbackQueryHandler(ask_speaker_cancel, pattern='^cancel$'),
+            ],
+            CONFIRMING_QUESTION: [
+                CallbackQueryHandler(ask_speaker_confirm, pattern='^confirm$'),
+                CallbackQueryHandler(ask_speaker_cancel, pattern='^cancel$'),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('cancel', ask_speaker_cancel),
+            CallbackQueryHandler(ask_speaker_cancel, pattern='^cancel$'),
+        ],
+    )
+
+    dp.add_handler(ask_speaker_conv)
 
     # Обработчики донатов
     dp.add_handler(CallbackQueryHandler(handle_fixed_donate_callback, pattern='^donate_\\d+$'))

@@ -38,8 +38,8 @@ class SpeakerAdmin(admin.ModelAdmin):
 
 @admin.register(Participant)
 class ParticipantAdmin(admin.ModelAdmin):
-    list_display = ('name', 'telegram_username', 'is_speaker')
-    list_filter = ('is_speaker',)
+    list_display = ('name', 'telegram_username', 'is_speaker', 'is_event_manager')
+    list_filter = ('is_speaker', 'is_event_manager')
     search_fields = ('name', 'telegram_username')
 
 

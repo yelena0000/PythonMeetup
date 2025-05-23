@@ -35,7 +35,8 @@ class Event(models.Model):
 class Speaker(models.Model):
     events = models.ManyToManyField(
         Event,
-        related_name='speakers'
+        related_name='speakers',
+        blank=True,
     )
     name = models.CharField(max_length=100)
     telegram_username = models.CharField(
@@ -91,7 +92,8 @@ class Participant(models.Model):
         null=True,
         help_text="Короткая информация о роде деятельности"
     )
-    is_speaker = models.BooleanField(default=False)
+    is_speaker = models.BooleanField(default=False, verbose_name='Докладчик')
+    is_event_manager = models.BooleanField(default=False, verbose_name='Управляющий мероприятием')
 
     def __str__(self):
         return f"{self.name} (@{self.telegram_username})"
