@@ -230,17 +230,6 @@ def create_payment(update, context, amount):
             is_confirmed=True
         )
 
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "💳 Перейти к оплате",
-            url=payment.confirmation.confirmation_url
-        )]])
-
-        message = f"<b>Оплата {amount}₽</b>\nНажмите кнопку ниже:"
-        if update.callback_query:
-            update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
-        else:
-            context.bot.send_message(chat_id, message, reply_markup=reply_markup, parse_mode='HTML')
-
         context.bot.send_message(
             chat_id=chat_id,
             text=f"✨ <b>Спасибо, что решили поддержать мероприятие, {user.first_name}!</b>\n\n"
@@ -251,6 +240,18 @@ def create_payment(update, context, amount):
                  f"<i>Спасибо за вклад в развитие комьюнити!</i>",
             parse_mode='HTML'
         )
+
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "💳 Перейти к оплате",
+            url=payment.confirmation.confirmation_url
+        )]])
+
+        message = f"<b>Для оплаты {amount} ₽</b>\nНажмите кнопку ниже:"
+        if update.callback_query:
+            update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        else:
+            context.bot.send_message(chat_id, message, reply_markup=reply_markup, parse_mode='HTML')
+
 
     except Exception as e:
         error_msg = f"❌ <b>Ошибка при создании платежа</b>\n{str(e)}"
