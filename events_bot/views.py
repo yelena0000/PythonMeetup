@@ -1,13 +1,14 @@
+from django.conf import settings
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, models
 from .models import Event, Speaker, TimeSlot, Participant, Question
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from environs import Env
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 
 env = Env()
 env.read_env()
-BOT_TOKEN = env.str("TG_BOT_TOKEN")
+BOT_TOKEN = settings.TG_BOT_TOKEN
 
 
 def get_program():
@@ -67,28 +68,48 @@ def get_chat_id_by_username(username):
         raise Exception(f"Найдено несколько спикеров @{username}")
 
 
-def send_question(speaker_username, participant_id, text, participant_name="Unknown", ):
-    message_text = f"Новый вопрос от {participant_name} (ID: {participant_id}):\n{text}"
-    chat_id = get_chat_id_by_username(speaker_username)
+def send_question(speaker_username, participant_id, participant_name, text):
     bot = Bot(token=BOT_TOKEN)
+
     try:
         with transaction.atomic():
-            speaker = Speaker.objects.prefetch_related(
-                'events').get(telegram_username=speaker_username)
+            # Ищем спикера по telegram_username или telegram_id
+            speaker = Speaker.objects.get(
+                models.Q(telegram_username=speaker_username) |
+                models.Q(telegram_id=participant_id)
+            )
+
+            # Проверяем, что спикер привязан к активному мероприятию
+            if not speaker.events.filter(is_active=True).exists():
+                raise Exception("Спикер не привязан к активному мероприятию")
+
             participant, _ = Participant.objects.get_or_create(
                 telegram_id=participant_id,
                 defaults={'name': participant_name}
             )
             event = speaker.events.filter(is_active=True).first()
-            Question.objects.create(
+
+            # Создаем вопрос в БД
+            question = Question.objects.create(
                 event=event,
                 speaker=speaker,
                 participant=participant,
                 text=text
             )
 
-            bot.send_message(chat_id=chat_id, text=message_text)
-    except Exception as err:
-        return f"Произошла ошибка: {str(err)}"
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Ответить", callback_data=f'answer_{question.id}')]
+            ])
 
-    return f'Вопрос спикеру {speaker.name} по теме доклада "{event.title}" был успешно отправлен'
+            bot.send_message(
+                chat_id=speaker.telegram_id,
+                text=f"❓ Новый вопрос от {participant_name}:\n\n{text}",
+                reply_markup=reply_markup
+            )
+
+            return True
+
+    except Speaker.DoesNotExist:
+        raise Exception(f"Спикер @{speaker_username} не найден")
+    except Exception as e:
+        raise Exception(f"Ошибка при отправке вопроса: {str(e)}")

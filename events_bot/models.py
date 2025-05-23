@@ -31,6 +31,12 @@ class Event(models.Model):
             end_time__gte=now
         ).select_related('speaker').first()
 
+    def get_full_name(self):
+        return f"{self.title} ({self.date.strftime('%d.%m.%Y')})"
+
+    class Meta:
+        ordering = ['date']
+
 
 class Speaker(models.Model):
     events = models.ManyToManyField(
@@ -43,6 +49,12 @@ class Speaker(models.Model):
         max_length=100,
         blank=True,
         null=True
+    )
+    telegram_id = models.BigIntegerField(
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="ID пользователя в Telegram"
     )
     bio = models.TextField(
         blank=True,
@@ -124,6 +136,10 @@ class Question(models.Model):
 
     def __str__(self):
         return f"Вопрос от {self.participant.name} к {self.speaker.name}"
+
+    def mark_answered(self):
+        self.is_answered = True
+        self.save()
 
 
 class Donation(models.Model):

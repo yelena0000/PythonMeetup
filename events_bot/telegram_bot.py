@@ -14,11 +14,11 @@ from telegram import (
     Update
 )
 from django.conf import settings
-from events_bot.models import Event, Participant, Donation
 from yookassa import Payment, Configuration
 import uuid
 from django.utils import timezone
 
+from events_bot.models import Event, Participant, Donation, Question, Speaker
 from events_bot.views import get_staff_ids, send_question
 
 
@@ -27,8 +27,10 @@ from events_bot.views import get_staff_ids, send_question
 
     SELECTING_SPEAKER,
     AWAITING_QUESTION,
-    CONFIRMING_QUESTION
-) = range(4)
+    CONFIRMING_QUESTION,
+    SELECTING_EVENT,
+    CONFIRMING_REGISTRATION
+) = range(6)
 
 # Инициализация ЮKassa
 Configuration.account_id = settings.YOOKASSA_SHOP_ID
@@ -372,8 +374,17 @@ def ask_speaker_confirm(update, context):
 
     if query.data == 'confirm':
         try:
+            # Получаем speaker_username из контекста
+            speaker_username = context.user_data['speaker_username']
+
+            # Проверяем, что спикер существует и у него есть telegram_id
+            speaker = Speaker.objects.get(telegram_username=speaker_username)
+            if not speaker.telegram_id:
+                query.edit_message_text("❌ Ошибка: у спикера не указан Telegram ID")
+                return ConversationHandler.END
+
             result = send_question(
-                speaker_username=context.user_data['speaker_username'],
+                speaker_username=speaker_username,
                 participant_id=update.effective_user.id,
                 participant_name=update.effective_user.first_name,
                 text=context.user_data['question_text']
@@ -395,10 +406,170 @@ def ask_speaker_cancel(update, context):
     return ConversationHandler.END
 
 
+def setup_speaker_handlers(dp):
+    # Обработчик для кнопки "Ответить на вопрос"
+    dp.add_handler(CallbackQueryHandler(
+        handle_mark_answered,
+        pattern='^answer_\\d+$'  # answer_<question_id>
+    ))
+
+
+def handle_mark_answered(update, context):
+    query = update.callback_query
+    question_id = int(query.data.split('_')[1])
+    user = query.from_user
+
+    try:
+        question = Question.objects.get(
+            id=question_id,
+            speaker__telegram_id=user.id  # Проверяем, что отвечает именно спикер
+        )
+        question.mark_answered()
+        query.edit_message_text("✅ Вопрос отмечен как отвеченный")
+    except Question.DoesNotExist:
+        query.edit_message_text("❌ Вопрос не найден или у вас нет прав")
+
+
+def show_unanswered_questions(update, context):
+    user = update.effective_user
+    try:
+        speaker = Speaker.objects.get(telegram_username=user.username)
+        questions = speaker.questions.filter(is_answered=False)
+
+        if not questions.exists():
+            update.message.reply_text("У вас нет неотвеченных вопросов.")
+            return
+
+        for q in questions:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "✅ Ответил",
+                    callback_data=f"answer_{q.id}"
+                )]
+            ])
+            update.message.reply_text(
+                f"❓ Вопрос от {q.participant.name}:\n\n"
+                f"{q.text}\n\n"
+                f"Задан: {q.timestamp.strftime('%d.%m.%Y %H:%M')}",
+                reply_markup=keyboard
+            )
+    except Speaker.DoesNotExist:
+        update.message.reply_text("Вы не зарегистрированы как спикер.")
+
+
+def get_events_keyboard():
+    """Клавиатура с активными и будущими мероприятиями"""
+    events = Event.objects.filter(date__gte=timezone.now()).order_by('date')
+    keyboard = [
+        [InlineKeyboardButton(
+            event.get_full_name(),
+            callback_data=f"event_{event.id}"
+        )]
+        for event in events
+    ]
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data='cancel')])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def register_speaker_start(update, context):
+    """Начало процесса регистрации спикера"""
+    events = Event.objects.filter(date__gte=timezone.now()).exists()
+
+    if not events:
+        update.message.reply_text(
+            "Сейчас нет запланированных мероприятий",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+
+    update.message.reply_text(
+        "Выберите мероприятие для регистрации:",
+        reply_markup=get_events_keyboard()
+    )
+    return SELECTING_EVENT
+
+
+def register_speaker_select_event(update, context):
+    """Обработка выбора мероприятия"""
+    query = update.callback_query
+    query.answer()
+
+    if query.data == 'cancel':
+        query.edit_message_text("Регистрация отменена")
+        return ConversationHandler.END
+
+    event_id = int(query.data.split('_')[1])
+    event = Event.objects.get(id=event_id)
+    context.user_data['register_event'] = event
+
+    query.edit_message_text(
+        f"Подтвердите регистрацию как спикера на:\n"
+        f"<b>{event.title}</b>\n"
+        f"Дата: {event.date.strftime('%d.%m.%Y')}\n\n"
+        f"Ваше имя: {query.from_user.full_name}\n"
+        f"Username: @{query.from_user.username or 'не указан'}",
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подтвердить", callback_data='confirm')],
+            [InlineKeyboardButton("❌ Отмена", callback_data='cancel')]
+        ])
+    )
+    return CONFIRMING_REGISTRATION
+
+
+def register_speaker_confirm(update, context):
+    """Завершение регистрации"""
+    query = update.callback_query
+    query.answer()
+    user = query.from_user
+
+    if query.data == 'confirm':
+        try:
+            event = context.user_data['register_event']
+
+            # Создаем или обновляем спикера
+            speaker, created = Speaker.objects.update_or_create(
+                telegram_id=user.id,
+                defaults={
+                    'name': user.full_name,
+                    'telegram_username': user.username
+                }
+            )
+
+            # Добавляем связь с мероприятием
+            speaker.events.add(event)
+
+            # Помечаем участника как спикера
+            Participant.objects.update_or_create(
+                telegram_id=user.id,
+                defaults={
+                    'name': user.full_name,
+                    'telegram_username': user.username,
+                    'is_speaker': True
+                }
+            )
+
+            query.edit_message_text(
+                f"✅ Вы успешно зарегистрированы как спикер на мероприятие:\n"
+                f"<b>{event.title}</b>\n"
+                f"Дата: {event.date.strftime('%d.%m.%Y')}",
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            query.edit_message_text(f"❌ Ошибка регистрации: {str(e)}")
+    else:
+        query.edit_message_text("Регистрация отменена")
+
+    return ConversationHandler.END
+
+
 def setup_dispatcher(dp):
     # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", start))
+    dp.add_handler(CommandHandler("my_questions", show_unanswered_questions)) # обработчики для спикеров
+
+    setup_speaker_handlers(dp)  # обработчики для спикеров
 
     # Обработчики вопросов к спикерам
     ask_speaker_conv = ConversationHandler(
@@ -441,6 +612,23 @@ def setup_dispatcher(dp):
     )
     dp.add_handler(donate_conv_handler)
 
+    # Обработчики регистрации спикеров
+    registration_conv = ConversationHandler(
+        entry_points=[CommandHandler('register_speaker', register_speaker_start)],
+        states={
+            SELECTING_EVENT: [
+                CallbackQueryHandler(register_speaker_select_event, pattern='^event_'),
+                CallbackQueryHandler(register_speaker_confirm, pattern='^cancel$'),
+            ],
+            CONFIRMING_REGISTRATION: [
+                CallbackQueryHandler(register_speaker_confirm),
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    dp.add_handler(registration_conv)
+
     # Обработчики текстовых сообщений (кнопки главного меню)
     dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
     dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
@@ -455,9 +643,11 @@ def start_bot():
 
     updater.bot.set_my_commands([
         BotCommand("start", "Главное меню"),
-        BotCommand("program", "Программа мероприятия"),
-        BotCommand("donate", "Поддержать мероприятие"),
-        BotCommand("help", "Помощь по боту")
+        #BotCommand("program", "Программа мероприятия"),
+        #BotCommand("donate", "Поддержать мероприятие"),
+        BotCommand("register_speaker", "Зарегистрироваться как спикер"),
+        BotCommand("my_questions", "Мои вопросы (для спикеров)"),
+        BotCommand("help", "Помощь по боту"),
     ])
 
     dp = setup_dispatcher(dp)
