@@ -50,19 +50,64 @@ Configuration.secret_key = settings.YOOKASSA_SECRET_KEY
 def get_main_keyboard(participant):
     """Кнопки главного меню"""
     keyboard = [
-        ["📅 Программа", "🎁 Поддержать"],
-        ["🙋Пообщаться", "📋Задать вопрос спикеру"],
-        ["📌 Зарегистрироваться на мероприятие", "📋 Мои мероприятия"],
-        ["Кто выступает сейчас?"],
+        ["📅 Мероприятие", "📝 Регистрация"],
+        ["🙋 Пообщаться", "🎁 Поддержать"]
     ]
-    if not participant.is_subscribed:
-        keyboard.append(["Подписаться на рассылку"])
-    else:
-        keyboard.append(["Отписаться от рассылки"])
 
-    if participant.is_speaker or participant.is_event_manager:
-        keyboard.append(["Сделать рассылку"])
+    # Добавляем кнопку "Мои вопросы" только для спикеров
+    if participant.is_speaker:
+        keyboard.append(["❓ Мои вопросы"])
+
+    # Добавляем кнопку "Сделать рассылку" только для организаторов и спикеров
+    if participant.is_event_manager:
+        keyboard.append(["📢 Сделать рассылку"])
+
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
+def event_menu(update, context):
+    """Обработчик меню 'Мероприятие'"""
+    user = update.message.from_user
+    participant, _ = Participant.objects.get_or_create(
+        telegram_id=user.id,
+        defaults={
+            'telegram_username': user.username,
+            'name': user.first_name or 'Аноним'
+        }
+    )
+
+    keyboard = [
+        ["📜 Программа", "📋 Мои мероприятия"],
+        ["❓ Задать вопрос спикеру"],
+        ["🎤 Кто выступает сейчас?"],
+    ]
+
+    # Кнопка подписки/отписки
+    if not participant.is_subscribed:
+        keyboard.append(["✅ Подписаться на рассылку"])
+    else:
+        keyboard.append(["❌ Отписаться от рассылки"])
+
+    keyboard.append(["🔙 Назад"])
+
+    update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+
+def registration_menu(update, context):
+    """Обработчик меню 'Регистрация'"""
+    keyboard = [
+        ["👤 Зарегистрироваться участником"],
+        ["🎤 Зарегистрироваться спикером"],
+        ["🔙 Назад"]
+    ]
+
+    update.message.reply_text(
+        "Выберите тип регистрации:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
 
 
 def start(update, context):
@@ -83,7 +128,11 @@ def start(update, context):
     update.message.reply_text(
         f"✨ <b>Привет, {user.first_name}!</b> ✨\n\n"
         f"Я бот для <i>{event_name}</i>\n"
-        "Выбери действие:",
+        "Используйте кнопки ниже для навигации:\n"
+        "• <b>Мероприятие</b> - программа, вопросы, спикеры\n"
+        "• <b>Регистрация</b> - зарегистрироваться как участник или спикер\n"
+        "• <b>Пообщаться</b> - знакомства с участниками\n"
+        "• <b>Поддержать</b> - сделать донат на развитие",
         reply_markup=main_menu_keyboard,
         parse_mode='HTML'
     )
@@ -1370,40 +1419,51 @@ def view_profiles(update, context):
     query.answer()
 
     participant = Participant.objects.get(telegram_id=query.from_user.id)
-    if not participant.bio:  # Если анкета не заполнена
-        query.edit_message_text(
-            "❌ Сначала заполните анкету!",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📝 Рассказать о себе", callback_data="fill_profile")]
-            ])
-        )
-        return ConversationHandler.END
-
     other_profiles = Participant.objects.exclude(telegram_id=query.from_user.id).filter(bio__isnull=False)
+
     if not other_profiles.exists():
         query.edit_message_text("😢 Пока нет анкет для просмотра.")
         return ConversationHandler.END
 
-    random_profile = other_profiles.order_by('?').first()
-    context.user_data['current_profile_id'] = random_profile.telegram_id
+    # Получаем список всех подходящих профилей
+    available_profiles = list(other_profiles)
 
-    text = (
-        f"👤 <b>{random_profile.name}</b>\n"
-        f"💼 {random_profile.bio}\n\n"
-        f"Хотите связаться?"
-    )
+    # Если в контексте нет списка просмотренных профилей, создаем его
+    if 'viewed_profiles' not in context.user_data:
+        context.user_data['viewed_profiles'] = []
 
-    query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📩 Запросить контакт", callback_data="request_contact"),
-                InlineKeyboardButton("➡️ Дальше", callback_data="next_profile")
-            ]
-        ]),
-        parse_mode='HTML'
-    )
-    return VIEWING_PROFILE
+    # Ищем профиль, который еще не был показан
+    for profile in available_profiles:
+        if profile.telegram_id not in context.user_data['viewed_profiles']:
+            context.user_data['current_profile_id'] = profile.telegram_id
+            context.user_data['viewed_profiles'].append(profile.telegram_id)
+
+            text = (
+                f"👤 <b>{profile.name}</b>\n"
+                f"💼 {profile.bio}\n\n"
+                f"Хотите связаться?"
+            )
+
+            try:
+                query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("📩 Запросить контакт", callback_data="request_contact"),
+                            InlineKeyboardButton("➡️ Дальше", callback_data="next_profile")
+                        ]
+                    ]),
+                    parse_mode='HTML'
+                )
+                return VIEWING_PROFILE
+            except Exception as e:
+                print(f"Ошибка при редактировании сообщения: {e}")
+                return VIEWING_PROFILE
+
+    # Если все профили просмотрены
+    context.user_data['viewed_profiles'] = []  # Сбрасываем список просмотренных
+    query.edit_message_text("😢 Вы просмотрели все анкеты. Начнем сначала!")
+    return view_profiles(update, context)  # Рекурсивно запускаем снова
 
 
 def handle_profile_actions(update, context):
@@ -1422,88 +1482,37 @@ def handle_profile_actions(update, context):
         return view_profiles(update, context)
 
 
+def back_to_menu(update, context):
+    user = update.message.from_user
+    participant, _ = Participant.objects.get_or_create(
+        telegram_id=user.id,
+        defaults={
+            'telegram_username': user.username,
+            'name': user.first_name or 'Аноним'
+        }
+    )
+    update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=get_main_keyboard(participant)
+    )
+
+
 def setup_dispatcher(dp):
-    # Обработчики команд
+    # Командные обработчики
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", start))
-    dp.add_handler(CommandHandler("my_questions", show_unanswered_questions))
+    dp.add_handler(CommandHandler("cancel", cancel))
 
-    # Обработчики регистрации спикеров
-    registration_conv = ConversationHandler(
-        entry_points=[CommandHandler(
-            'register_speaker', register_speaker_start)],
-        states={
-            SELECTING_EVENT: [
-                CallbackQueryHandler(
-                    register_speaker_select_event, pattern='^event_'),
-                CallbackQueryHandler(
-                    register_speaker_confirm, pattern='^cancel$'),
-            ],
-            CONFIRMING_REGISTRATION: [
-                CallbackQueryHandler(register_speaker_confirm),
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    dp.add_handler(registration_conv)
-
-    # Обработчики регистрации участников
-    participant_registration_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex(
-            '^📌 Зарегистрироваться на мероприятие$'), register_participant_start)],
-        states={
-            SELECTING_EVENT_PARTICIPANT: [
-                CallbackQueryHandler(
-                    register_participant_select_event, pattern='^event_'),
-                CallbackQueryHandler(
-                    register_participant_confirm, pattern='^cancel$'),
-            ],
-            CONFIRMING_PARTICIPANT_REGISTRATION: [
-                CallbackQueryHandler(register_participant_confirm),
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    dp.add_handler(participant_registration_conv)
-
-    # Обработчики мероприятий юзера
-    my_events_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex(
-            '^📋 Мои мероприятия$'), my_events_start)],
-        states={
-            SHOW_MY_EVENTS: [
-                CallbackQueryHandler(
-                    my_events_select_event, pattern='^my_event_'),
-                CallbackQueryHandler(
-                    my_events_confirm_unregister, pattern='^cancel$'),
-            ],
-            CONFIRMING_UNREGISTER: [
-                CallbackQueryHandler(my_events_confirm_unregister),
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    dp.add_handler(my_events_conv)
-
-    setup_speaker_handlers(dp)  # обработчики для спикеров
-
-    # Обработчики вопросов к спикерам
+    # ConversationHandler: Вопрос спикеру
     ask_speaker_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(Filters.regex(
-                '^📋Задать вопрос спикеру$'), ask_speaker_start)
-        ],
+        entry_points=[MessageHandler(Filters.regex('^❓ Задать вопрос спикеру$'), ask_speaker_start)],
         states={
             SELECTING_SPEAKER: [
                 CallbackQueryHandler(ask_speaker_select, pattern='^ask_'),
                 CallbackQueryHandler(ask_speaker_cancel, pattern='^back$'),
             ],
             AWAITING_QUESTION: [
-                MessageHandler(Filters.text & ~Filters.command,
-                               ask_speaker_receive_question),
+                MessageHandler(Filters.text & ~Filters.command, ask_speaker_receive_question),
                 CallbackQueryHandler(ask_speaker_cancel, pattern='^cancel$'),
             ],
             CONFIRMING_QUESTION: [
@@ -1514,77 +1523,114 @@ def setup_dispatcher(dp):
         fallbacks=[
             CommandHandler('cancel', ask_speaker_cancel),
             CallbackQueryHandler(ask_speaker_cancel, pattern='^cancel$'),
-            MessageHandler(Filters.regex('^📋Задать вопрос спикеру$'),
-                           ask_speaker_start),  # Добавлено для перезапуска
         ],
         allow_reentry=True,
     )
-
     dp.add_handler(ask_speaker_conv)
 
-    # Обработчики донатов
-    dp.add_handler(CallbackQueryHandler(
-        handle_fixed_donate_callback, pattern='^donate_\\d+$'))
-
-    donate_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(
-            handle_custom_donate_callback, pattern='^donate_custom$')],
+    # ConversationHandler: Регистрация участника
+    participant_registration_conv = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex('^👤 Зарегистрироваться участником$'), register_participant_start)],
         states={
-            CHOOSE_CUSTOM_AMOUNT: [MessageHandler(
-                Filters.text & ~Filters.command, handle_custom_amount)]
+            SELECTING_EVENT_PARTICIPANT: [
+                CallbackQueryHandler(register_participant_select_event, pattern='^event_'),
+                CallbackQueryHandler(register_participant_confirm, pattern='^cancel$'),
+            ],
+            CONFIRMING_PARTICIPANT_REGISTRATION: [
+                CallbackQueryHandler(register_participant_confirm),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            MessageHandler(Filters.regex('^🔙 Назад$'), back_to_menu)
+        ],
+    )
+    dp.add_handler(participant_registration_conv)
+
+    # ConversationHandler: Регистрация спикера
+    registration_conv = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex('^🎤 Зарегистрироваться спикером$'), register_speaker_start)],
+        states={
+            SELECTING_EVENT: [
+                CallbackQueryHandler(register_speaker_select_event, pattern='^event_'),
+                CallbackQueryHandler(register_speaker_confirm, pattern='^cancel$'),
+            ],
+            CONFIRMING_REGISTRATION: [
+                CallbackQueryHandler(register_speaker_confirm),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            MessageHandler(Filters.regex('^🔙 Назад$'), back_to_menu)
+        ],
+    )
+    dp.add_handler(registration_conv)
+
+    # ConversationHandler: Мои мероприятия
+    my_events_conv = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex('^📋 Мои мероприятия$'), my_events_start)],
+        states={
+            SHOW_MY_EVENTS: [
+                CallbackQueryHandler(my_events_select_event, pattern='^my_event_'),
+                CallbackQueryHandler(my_events_confirm_unregister, pattern='^cancel$'),
+            ],
+            CONFIRMING_UNREGISTER: [
+                CallbackQueryHandler(my_events_confirm_unregister),
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+    dp.add_handler(my_events_conv)
+
+    # ConversationHandler: Донаты (фикс и кастом)
+    donate_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(handle_custom_donate_callback, pattern='^donate_custom$')],
+        states={
+            CHOOSE_CUSTOM_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_custom_amount)]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     dp.add_handler(donate_conv_handler)
 
-    # Обработчики подписки
+    # ConversationHandler: Подписка
     subscribe_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex(
-            '^Подписаться на рассылку$'), subscribe_start)],
+        entry_points=[MessageHandler(Filters.regex('^✅ Подписаться на рассылку$'), subscribe_start)],
         states={
             SUBSCRIBING: [
-                CallbackQueryHandler(
-                    subscribe_confirm, pattern='^subscribe_(confirm|cancel)$'),
+                CallbackQueryHandler(subscribe_confirm, pattern='^subscribe_(confirm|cancel)$'),
             ],
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            CallbackQueryHandler(
-                subscribe_confirm, pattern='^subscribe_cancel$'),
+            CallbackQueryHandler(subscribe_confirm, pattern='^subscribe_cancel$'),
         ],
     )
     dp.add_handler(subscribe_conv)
 
-    # Обработчики отписки
+    # ConversationHandler: Отписка
     unsubscribe_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex(
-            '^Отписаться от рассылки$'), unsubscribe_start)],
+        entry_points=[MessageHandler(Filters.regex('^❌ Отписаться от рассылки$'), unsubscribe_start)],
         states={
             UNSUBSCRIBING: [
-                CallbackQueryHandler(unsubscribe_confirm,
-                                     pattern='^unsubscribe_(confirm|cancel)$'),
+                CallbackQueryHandler(unsubscribe_confirm, pattern='^unsubscribe_(confirm|cancel)$'),
             ],
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            CallbackQueryHandler(unsubscribe_confirm,
-                                 pattern='^unsubscribe_cancel$'),
+            CallbackQueryHandler(unsubscribe_confirm, pattern='^unsubscribe_cancel$'),
         ],
     )
     dp.add_handler(unsubscribe_conv)
 
-    # Обработчики рассылки
+    # ConversationHandler: Рассылка
     mailing_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex(
-            '^Сделать рассылку$'), mailing_start)],
+        entry_points=[MessageHandler(Filters.regex('^📢 Сделать рассылку$'), mailing_start)],
         states={
             MAILING: [
-                MessageHandler(Filters.text & ~Filters.command,
-                               mailing_receive_message),
+                MessageHandler(Filters.text & ~Filters.command, mailing_receive_message),
             ],
             CONFIRMING_MAILING: [
-                CallbackQueryHandler(
-                    mailing_confirm, pattern='^mailing_(confirm|cancel)$'),
+                CallbackQueryHandler(mailing_confirm, pattern='^mailing_(confirm|cancel)$'),
             ],
         },
         fallbacks=[
@@ -1594,10 +1640,10 @@ def setup_dispatcher(dp):
     )
     dp.add_handler(mailing_conv)
 
-    # Обработчик знакомств
+    # ConversationHandler: Нетворкинг
     networking_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(Filters.regex('^🙋Пообщаться$'), networking),
+            MessageHandler(Filters.regex('^🙋 Пообщаться$'), networking),
             CallbackQueryHandler(start_fill_profile, pattern='^fill_profile$'),
             CallbackQueryHandler(view_profiles, pattern='^view_profiles$')
         ],
@@ -1606,16 +1652,40 @@ def setup_dispatcher(dp):
             AWAITING_BIO: [MessageHandler(Filters.text & ~Filters.command, save_bio)],
             VIEWING_PROFILE: [CallbackQueryHandler(handle_profile_actions)]
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            MessageHandler(Filters.regex('^🔙 Назад$'), back_to_menu)
+        ],
         allow_reentry=True
     )
     dp.add_handler(networking_conv)
 
-    # Обработчики текстовых сообщений (кнопки главного меню)
-    dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
+    # Обработчики главного меню
+    dp.add_handler(MessageHandler(Filters.regex('^📅 Мероприятие$'), event_menu))
+    dp.add_handler(MessageHandler(Filters.regex('^📝 Регистрация$'), registration_menu))
+    dp.add_handler(MessageHandler(Filters.regex('^🙋 Пообщаться$'), networking))  # на случай одиночного входа
     dp.add_handler(MessageHandler(Filters.regex('^🎁 Поддержать$'), donate))
-    dp.add_handler(MessageHandler(Filters.regex(
-        '^Кто выступает сейчас\?$'), current_speaker))
+    dp.add_handler(MessageHandler(Filters.regex('^❓ Мои вопросы$'), show_unanswered_questions))
+    dp.add_handler(MessageHandler(Filters.regex('^📢 Сделать рассылку$'), mailing_start))
+
+    # Подменю "Мероприятие"
+    dp.add_handler(MessageHandler(Filters.regex('^📜 Программа$'), program))
+    dp.add_handler(MessageHandler(Filters.regex('^📋 Мои мероприятия$'), my_events_start))
+    dp.add_handler(MessageHandler(Filters.regex('^❓ Задать вопрос спикеру$'), ask_speaker_start))
+    dp.add_handler(MessageHandler(Filters.regex('^🎤 Кто выступает сейчас\\?$'), current_speaker))
+    dp.add_handler(MessageHandler(Filters.regex('^✅ Подписаться на рассылку$'), subscribe_start))
+    dp.add_handler(MessageHandler(Filters.regex('^❌ Отписаться от рассылки$'), unsubscribe_start))
+    dp.add_handler(MessageHandler(Filters.regex('^🔙 Назад$'), back_to_menu))
+
+    # Подменю "Регистрация"
+    dp.add_handler(MessageHandler(Filters.regex('^👤 Зарегистрироваться участником$'), register_participant_start))
+    dp.add_handler(MessageHandler(Filters.regex('^🎤 Зарегистрироваться спикером$'), register_speaker_start))
+    dp.add_handler(MessageHandler(Filters.regex('^🔙 Назад$'), back_to_menu))
+
+    # Обработчики для спикеров
+    setup_speaker_handlers(dp)
+    # Обработчики для донатов
+    dp.add_handler(CallbackQueryHandler(handle_fixed_donate_callback, pattern='^donate_\\d+$'))
 
     return dp
 
@@ -1626,11 +1696,8 @@ def start_bot():
 
     updater.bot.set_my_commands([
         BotCommand("start", "Главное меню"),
-        # BotCommand("program", "Программа мероприятия"),
-        # BotCommand("donate", "Поддержать мероприятие"),
-        BotCommand("register_speaker", "Зарегистрироваться как спикер"),
-        BotCommand("my_questions", "Мои вопросы (для спикеров)"),
         BotCommand("help", "Помощь по боту"),
+        BotCommand("cancel", "Отмена текущего действия"),
     ])
 
     dp = setup_dispatcher(dp)
