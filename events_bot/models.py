@@ -16,8 +16,10 @@ class Event(models.Model):
         time_slots = self.time_slots.select_related('speaker').all()
         program = []
         for slot in time_slots:
+            start_local = timezone.localtime(slot.start_time)
+            end_local = timezone.localtime(slot.end_time)
             program.append(
-                f"{slot.start_time.strftime('%H:%M')} - {slot.end_time.strftime('%H:%M')}: "
+                f"{start_local.strftime('%H:%M')} - {end_local.strftime('%H:%M')}: "
                 f"{slot.title} ({slot.speaker.name})"
             )
         return "\n".join(program) if program else "Программа пока не доступна."

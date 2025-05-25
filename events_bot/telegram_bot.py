@@ -335,16 +335,18 @@ def current_speaker(update, context):
         )
         return
 
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())  # Добавляем localtime здесь
     current_slot = event.get_current_speaker()
 
     if current_slot:
         speaker = current_slot.speaker
+        start_time = timezone.localtime(current_slot.start_time)  # Конвертируем в московское время
+        end_time = timezone.localtime(current_slot.end_time)
         update.message.reply_text(
             f"🎤 <b>Сейчас выступает:</b>\n\n"
             f"👤 <b>{speaker.name}</b>\n"
             f"📢 <i>{current_slot.title}</i>\n"
-            f"🕒 {current_slot.start_time.strftime('%H:%M')}-{current_slot.end_time.strftime('%H:%M')}\n\n"
+            f"🕒 {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}\n\n"  # Используем конвертированное время
             f"{current_slot.description}\n\n"
             f"ℹ️ {speaker.bio if speaker.bio else 'Нет дополнительной информации'}",
             parse_mode='HTML'
