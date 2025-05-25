@@ -101,8 +101,8 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-YOOKASSA_SHOP_ID = env.str('YOOKASSA_SHOP_ID')
-YOOKASSA_SECRET_KEY = env.str('YOOKASSA_SECRET_KEY')
+YOOKASSA_SHOP_ID = env.str('YOOKASSA_SHOP_ID', '')
+YOOKASSA_SECRET_KEY = env.str('YOOKASSA_SECRET_KEY', '')
 #WEBHOOK_URL = 'https://домен/yookassa-webhook/'
 
-TG_BOT_USERNAME =env.str('TG_BOT_USERNAME')
+TG_BOT_USERNAME =env.str('TG_BOT_USERNAME', '')

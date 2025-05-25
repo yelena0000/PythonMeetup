@@ -107,6 +107,19 @@ class Participant(models.Model):
     )
     is_speaker = models.BooleanField(default=False, verbose_name='Докладчик')
     is_event_manager = models.BooleanField(default=False, verbose_name='Управляющий мероприятием')
+    is_subscribed = models.BooleanField(default=False, verbose_name='Подписан')
+
+    registered_events = models.ManyToManyField(
+        Event,
+        related_name='participants',
+        blank=True,
+        verbose_name='Зарегистрированные мероприятия'
+    )
+
+    @property
+    def has_profile(self):
+        """Проверяет, заполнена ли анкета"""
+        return bool(self.name and self.bio)
 
     def __str__(self):
         return f"{self.name} (@{self.telegram_username})"
