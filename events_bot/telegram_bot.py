@@ -335,18 +335,22 @@ def current_speaker(update, context):
         )
         return
 
-    now = timezone.localtime(timezone.now())  # Добавляем localtime здесь
+    now = timezone.localtime(timezone.now())
     current_slot = event.get_current_speaker()
 
     if current_slot:
         speaker = current_slot.speaker
-        start_time = timezone.localtime(current_slot.start_time)  # Конвертируем в московское время
+        start_time = timezone.localtime(current_slot.start_time)
         end_time = timezone.localtime(current_slot.end_time)
+
+        # Добавляем пометку о продленном выступлении
+        extended_note = " (выступление продлено организатором)" if current_slot.is_extended else ""
+
         update.message.reply_text(
-            f"🎤 <b>Сейчас выступает:</b>\n\n"
+            f"🎤 <b>Сейчас выступает:</b>{extended_note}\n\n"
             f"👤 <b>{speaker.name}</b>\n"
             f"📢 <i>{current_slot.title}</i>\n"
-            f"🕒 {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}\n\n"  # Используем конвертированное время
+            f"🕒 {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}\n\n"
             f"{current_slot.description}\n\n"
             f"ℹ️ {speaker.bio if speaker.bio else 'Нет дополнительной информации'}",
             parse_mode='HTML'

@@ -102,8 +102,9 @@ class DonationAdmin(admin.ModelAdmin):
 
 @admin.register(TimeSlot)
 class TimeSlotAdmin(admin.ModelAdmin):
-    list_display = ('event', 'speaker', 'start_time', 'end_time', 'title')
+    list_display = ('event', 'speaker', 'start_time', 'end_time', 'title', 'is_extended')
     list_filter = ('event', 'speaker')
     search_fields = ('title', 'speaker__name')
     list_per_page = 20
     date_hierarchy = 'start_time'
+    list_editable = ('is_extended',)

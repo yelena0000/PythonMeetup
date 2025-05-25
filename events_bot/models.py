@@ -27,7 +27,18 @@ class Event(models.Model):
     def get_current_speaker(self):
         if not self.is_active:
             return None
+
         now = timezone.now()
+
+        # Сначала проверяем слоты с продленным выступлением
+        extended_slot = self.time_slots.filter(
+            is_extended=True
+        ).select_related('speaker').first()
+
+        if extended_slot:
+            return extended_slot
+
+        # Если нет продленных выступлений, работаем по расписанию
         return self.time_slots.filter(
             start_time__lte=now,
             end_time__gte=now
@@ -95,6 +106,11 @@ class TimeSlot(models.Model):
     end_time = models.DateTimeField(verbose_name="Время окончания")
     title = models.CharField(max_length=255, verbose_name="Название доклада")
     description = models.TextField(blank=True, verbose_name="Описание доклада")
+    is_extended = models.BooleanField(
+        default=False,
+        verbose_name="Выступление продлено",
+        help_text="Если отмечено, спикер будет считаться текущим вне зависимости от расписания"
+    )
 
     class Meta:
         ordering = ['start_time']
