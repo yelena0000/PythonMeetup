@@ -1279,7 +1279,147 @@ def send_new_event_notification(bot, event):
     return sent_count
 
 
+def networking(update, context):
+    """Кнопка «Пообщаться» в главном меню"""
+    user = update.message.from_user
+    participant, _ = Participant.objects.get_or_create(
+        telegram_id=user.id,
+        defaults={
+            'telegram_username': user.username,
+            'name': user.first_name or 'Аноним'
+        }
+    )
 
+    text = (
+        "🌟 <b>Знакомства на мероприятии</b> 🌟\n\n"
+        "Здесь можно:\n"
+        "• Рассказать о себе\n"
+        "• Найти интересных людей\n\n"
+        "Как это работает?\n"
+        "1. Заполните свою анкету.\n"
+        "2. Смотрите анкеты других.\n"
+        "3. Запрашивайте контакты понравившихся участников!"
+    )
+
+    buttons = []
+    if not participant.bio:  # Проверяем, заполнена ли анкета
+        buttons.append([InlineKeyboardButton("📝 Рассказать о себе", callback_data="fill_profile")])
+    buttons.append([InlineKeyboardButton("👀 Познакомиться", callback_data="view_profiles")])
+
+    update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode='HTML'
+    )
+
+
+def start_fill_profile(update, context):
+    query = update.callback_query
+    query.answer()
+
+    participant = Participant.objects.get(telegram_id=query.from_user.id)
+    if participant.bio:  # Если анкета уже заполнена
+        query.edit_message_text(
+            "✅ Вы уже заполнили анкету!\n"
+            "Хотите познакомиться с другими участниками?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👀 Познакомиться", callback_data="view_profiles")]
+            ])
+        )
+        return ConversationHandler.END
+
+    query.edit_message_text(
+        "📝 <b>Расскажите о себе</b>\n\n"
+        "Введите ваше имя (как к вам обращаться):",
+        parse_mode='HTML'
+    )
+    return AWAITING_NAME
+
+
+def save_name(update, context):
+    name = update.message.text
+    context.user_data['name'] = name
+
+    update.message.reply_text(
+        "💼 Теперь укажите ваш род деятельности (например, «Python-разработчик»):"
+    )
+    return AWAITING_BIO
+
+
+def save_bio(update, context):
+    bio = update.message.text
+    user = update.message.from_user
+
+    Participant.objects.filter(telegram_id=user.id).update(
+        name=context.user_data['name'],
+        bio=bio
+    )
+
+    update.message.reply_text(
+        "✅ Анкета сохранена!\n"
+        "Теперь другие участники смогут с вами познакомиться.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("👀 Познакомиться", callback_data="view_profiles")]
+        ])
+    )
+    return ConversationHandler.END
+
+
+def view_profiles(update, context):
+    query = update.callback_query
+    query.answer()
+
+    participant = Participant.objects.get(telegram_id=query.from_user.id)
+    if not participant.bio:  # Если анкета не заполнена
+        query.edit_message_text(
+            "❌ Сначала заполните анкету!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 Рассказать о себе", callback_data="fill_profile")]
+            ])
+        )
+        return ConversationHandler.END
+
+    other_profiles = Participant.objects.exclude(telegram_id=query.from_user.id).filter(bio__isnull=False)
+    if not other_profiles.exists():
+        query.edit_message_text("😢 Пока нет анкет для просмотра.")
+        return ConversationHandler.END
+
+    random_profile = other_profiles.order_by('?').first()
+    context.user_data['current_profile_id'] = random_profile.telegram_id
+
+    text = (
+        f"👤 <b>{random_profile.name}</b>\n"
+        f"💼 {random_profile.bio}\n\n"
+        f"Хотите связаться?"
+    )
+
+    query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📩 Запросить контакт", callback_data="request_contact"),
+                InlineKeyboardButton("➡️ Дальше", callback_data="next_profile")
+            ]
+        ]),
+        parse_mode='HTML'
+    )
+    return VIEWING_PROFILE
+
+
+def handle_profile_actions(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if query.data == "request_contact":
+        profile = Participant.objects.get(telegram_id=context.user_data['current_profile_id'])
+        query.edit_message_text(
+            f"✉️ Контакт участника:\n"
+            f"@{profile.telegram_username}" if profile.telegram_username else
+            "❌ У участника не указан Telegram-username."
+        )
+        return ConversationHandler.END
+    else:
+        return view_profiles(update, context)
 
 
 def setup_dispatcher(dp):
@@ -1453,6 +1593,23 @@ def setup_dispatcher(dp):
         ],
     )
     dp.add_handler(mailing_conv)
+
+    # Обработчик знакомств
+    networking_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(Filters.regex('^🙋Пообщаться$'), networking),
+            CallbackQueryHandler(start_fill_profile, pattern='^fill_profile$'),
+            CallbackQueryHandler(view_profiles, pattern='^view_profiles$')
+        ],
+        states={
+            AWAITING_NAME: [MessageHandler(Filters.text & ~Filters.command, save_name)],
+            AWAITING_BIO: [MessageHandler(Filters.text & ~Filters.command, save_bio)],
+            VIEWING_PROFILE: [CallbackQueryHandler(handle_profile_actions)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    )
+    dp.add_handler(networking_conv)
 
     # Обработчики текстовых сообщений (кнопки главного меню)
     dp.add_handler(MessageHandler(Filters.regex('^📅 Программа$'), program))
