@@ -3,10 +3,10 @@ from django.utils import timezone
 
 
 class Event(models.Model):
-    title = models.CharField(max_length=255)
-    description = models.TextField()
-    date = models.DateField(auto_now_add=False)
-    is_active = models.BooleanField(default=True)
+    title = models.CharField(max_length=255, verbose_name="Название мероприятия")
+    description = models.TextField(verbose_name="Описание")
+    date = models.DateField(auto_now_add=False, verbose_name="Дата проведения")
+    is_active = models.BooleanField(default=True, verbose_name="Активно")
 
     def __str__(self):
         return self.title
@@ -38,6 +38,8 @@ class Event(models.Model):
 
     class Meta:
         ordering = ['date']
+        verbose_name = "Мероприятие"
+        verbose_name_plural = "Мероприятия"
 
 
 class Speaker(models.Model):
@@ -45,71 +47,85 @@ class Speaker(models.Model):
         Event,
         related_name='speakers',
         blank=True,
+        verbose_name="Мероприятия"
     )
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, verbose_name="Имя")
     telegram_username = models.CharField(
         max_length=100,
         blank=True,
         null=True,
-        unique=True
+        unique=True,
+        verbose_name="Telegram username"
     )
     telegram_id = models.BigIntegerField(
         unique=True,
         null=True,
         blank=True,
-        help_text="ID пользователя в Telegram"
+        help_text="ID пользователя в Telegram",
+        verbose_name="Telegram ID"
     )
     bio = models.TextField(
         blank=True,
-        null=True
+        null=True,
+        verbose_name="Биография"
     )
 
     def __str__(self):
         return self.name
+
+    class Meta:
+        verbose_name = "Спикер"
+        verbose_name_plural = "Спикеры"
 
 
 class TimeSlot(models.Model):
     event = models.ForeignKey(
         Event,
         on_delete=models.CASCADE,
-        related_name='time_slots'
+        related_name='time_slots',
+        verbose_name="Мероприятие"
     )
     speaker = models.ForeignKey(
         Speaker,
         on_delete=models.CASCADE,
-        related_name='time_slots'
+        related_name='time_slots',
+        verbose_name="Спикер"
     )
-    start_time = models.DateTimeField()
-    end_time = models.DateTimeField()
-    title = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
+    start_time = models.DateTimeField(verbose_name="Время начала")
+    end_time = models.DateTimeField(verbose_name="Время окончания")
+    title = models.CharField(max_length=255, verbose_name="Название доклада")
+    description = models.TextField(blank=True, verbose_name="Описание доклада")
 
     class Meta:
         ordering = ['start_time']
         indexes = [
             models.Index(fields=['start_time', 'end_time']),
         ]
+        verbose_name = "Временной слот"
+        verbose_name_plural = "Временные слоты"
 
     def __str__(self):
         return f"{self.title} ({self.start_time.strftime('%H:%M')} - {self.end_time.strftime('%H:%M')})"
 
 
 class Participant(models.Model):
-    telegram_id = models.BigIntegerField(unique=True)
+    telegram_id = models.BigIntegerField(unique=True, verbose_name="Telegram ID")
     telegram_username = models.CharField(
         max_length=100,
         blank=True,
-        null=True
+        null=True,
+        verbose_name="Telegram username"
     )
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, verbose_name="Имя")
     bio = models.TextField(
         blank=True,
         null=True,
-        help_text="Короткая информация о роде деятельности"
+        help_text="Короткая информация о роде деятельности",
+        verbose_name="О себе"
     )
     is_speaker = models.BooleanField(default=False, verbose_name='Докладчик')
-    is_event_manager = models.BooleanField(default=False, verbose_name='Управляющий мероприятием')
-    is_subscribed = models.BooleanField(default=False, verbose_name='Подписан')
+    is_event_manager = models.BooleanField(default=False, verbose_name='Организатор')
+    is_subscribed = models.BooleanField(default=False, verbose_name='Подписан на рассылку')
 
     registered_events = models.ManyToManyField(
         Event,
@@ -126,29 +142,38 @@ class Participant(models.Model):
     def __str__(self):
         return f"{self.name} (@{self.telegram_username})"
 
+    class Meta:
+        verbose_name = "Участник"
+        verbose_name_plural = "Участники"
+
 
 class Question(models.Model):
     event = models.ForeignKey(
         Event,
         on_delete=models.CASCADE,
-        related_name='questions'
+        related_name='questions',
+        verbose_name="Мероприятие"
     )
     speaker = models.ForeignKey(
         Speaker,
         on_delete=models.CASCADE,
-        related_name='questions'
+        related_name='questions',
+        verbose_name="Спикер"
     )
     participant = models.ForeignKey(
         Participant,
         on_delete=models.CASCADE,
-        related_name='questions'
+        related_name='questions',
+        verbose_name="Участник"
     )
-    text = models.TextField()
-    timestamp = models.DateTimeField(auto_now_add=True)
-    is_answered = models.BooleanField(default=False)
+    text = models.TextField(verbose_name="Текст вопроса")
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
+    is_answered = models.BooleanField(default=False, verbose_name="Ответ получен")
 
     class Meta:
         ordering = ['-timestamp']
+        verbose_name = "Вопрос"
+        verbose_name_plural = "Вопросы"
 
     def __str__(self):
         return f"Вопрос от {self.participant.name} к {self.speaker.name}"
@@ -162,27 +187,33 @@ class Donation(models.Model):
     event = models.ForeignKey(
         Event,
         on_delete=models.CASCADE,
-        related_name='donations'
+        related_name='donations',
+        verbose_name="Мероприятие"
     )
     participant = models.ForeignKey(
         Participant,
         on_delete=models.CASCADE,
-        related_name='donations'
+        related_name='donations',
+        verbose_name="Участник"
     )
     amount = models.DecimalField(
         max_digits=10,
-        decimal_places=2
+        decimal_places=2,
+        verbose_name="Сумма"
     )
-    timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="Время доната")
     payment_id = models.CharField(
         max_length=100,
         blank=True,
-        null=True
+        null=True,
+        verbose_name="ID платежа"
     )
-    is_confirmed = models.BooleanField(default=False)
+    is_confirmed = models.BooleanField(default=False, verbose_name="Подтверждён")
 
     class Meta:
         ordering = ['-timestamp']
+        verbose_name = "Донат"
+        verbose_name_plural = "Донаты"
 
     def __str__(self):
         status = "✅" if self.is_confirmed else "⏳"
@@ -193,19 +224,23 @@ class ConnectionRequest(models.Model):
     participant = models.ForeignKey(
         Participant,
         on_delete=models.CASCADE,
-        related_name='connection_requests'
+        related_name='connection_requests',
+        verbose_name="Участник"
     )
     target_participant = models.ForeignKey(
         Participant,
         on_delete=models.CASCADE,
-        related_name='incoming_requests'
+        related_name='incoming_requests',
+        verbose_name="Целевой участник"
     )
-    is_accepted = models.BooleanField(default=False)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    is_accepted = models.BooleanField(default=False, verbose_name="Принят")
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="Время запроса")
 
     class Meta:
         unique_together = [['participant', 'target_participant']]
         ordering = ['-timestamp']
+        verbose_name = "Запрос на знакомство"
+        verbose_name_plural = "Запросы на знакомство"
 
     def __str__(self):
         return f"Запрос на знакомство от {self.participant.name} к {self.target_participant.name}"
