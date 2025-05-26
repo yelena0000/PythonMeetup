@@ -139,9 +139,26 @@ class Participant(models.Model):
         help_text="Короткая информация о роде деятельности",
         verbose_name="О себе"
     )
-    is_speaker = models.BooleanField(default=False, verbose_name='Докладчик')
-    is_event_manager = models.BooleanField(default=False, verbose_name='Организатор')
-    is_subscribed = models.BooleanField(default=False, verbose_name='Подписан на рассылку')
+    is_speaker = models.BooleanField(
+        default=False,
+        verbose_name='Докладчик'
+    )
+    is_event_manager = models.BooleanField(
+        default=False,
+        verbose_name='Организатор'
+    )
+    is_subscribed = models.BooleanField(
+        default=False,
+        verbose_name='Подписан на рассылку'
+    )
+    is_first_in_networking = models.BooleanField(
+        default=False,
+        verbose_name='Первый пользователь в знакомствах'
+    )
+    notified_about_newcomers = models.BooleanField(
+        default=False,
+        verbose_name='Уведомлён о новых анкетах'
+    )
 
     registered_events = models.ManyToManyField(
         Event,
@@ -149,6 +166,14 @@ class Participant(models.Model):
         blank=True,
         verbose_name='Зарегистрированные мероприятия'
     )
+
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+
+        if is_new and self.bio:
+            from events_bot.telegram_bot import check_for_newcomers
+            check_for_newcomers()
 
     @property
     def has_profile(self):

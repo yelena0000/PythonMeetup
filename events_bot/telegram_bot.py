@@ -1404,19 +1404,64 @@ def save_bio(update, context):
     bio = update.message.text
     user = update.message.from_user
 
-    Participant.objects.filter(telegram_id=user.id).update(
-        name=context.user_data['name'],
-        bio=bio
+    is_first = not Participant.objects.exclude(telegram_id=user.id).exists()
+
+    participant, created = Participant.objects.update_or_create(
+        telegram_id=user.id,
+        defaults={
+            'name': context.user_data['name'],
+            'bio': bio,
+            'telegram_username': user.username,
+            'is_first_in_networking': is_first,
+            'notified_about_newcomers': False
+        }
     )
 
+    reply_text = "✅ Анкета сохранена!\nТеперь другие участники смогут с вами познакомиться."
+
+    if is_first:
+        reply_text += "\n\n✨ Вы первый участник знакомств! Мы уведомим вас, когда появятся другие."
+    else:
+        check_for_newcomers()
+
     update.message.reply_text(
-        "✅ Анкета сохранена!\n"
-        "Теперь другие участники смогут с вами познакомиться.",
+        reply_text,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("👀 Познакомиться", callback_data="view_profiles")]
         ])
     )
     return ConversationHandler.END
+
+
+def check_for_newcomers():
+    """Проверяет, нужно ли уведомить первого пользователя"""
+    try:
+        first_user = Participant.objects.filter(is_first_in_networking=True).first()
+        if not first_user or first_user.notified_about_newcomers:
+            return
+
+        new_users_count = Participant.objects.exclude(
+            telegram_id=first_user.telegram_id
+        ).count()
+
+        if new_users_count >= 5:
+            from telegram import Bot
+            bot = Bot(token=settings.TG_BOT_TOKEN)
+
+            bot.send_message(
+                chat_id=first_user.telegram_id,
+                text="🎉 Теперь есть 5 новых участников! Пришло время познакомиться.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👀 Посмотреть анкеты", callback_data="view_profiles")]
+                ])
+            )
+
+            first_user.notified_about_newcomers = True
+            first_user.save()
+
+    except Exception as e:
+        import logging
+        logging.error(f"Ошибка в check_for_newcomers: {e}")
 
 
 def view_profiles(update, context):
