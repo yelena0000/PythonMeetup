@@ -11,8 +11,11 @@ env.read_env()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-SECRET_KEY = 'django-insecure-n5d!leujb^5%in$%p5_&4=q(lex+il(&fjq$_m#*z#^_e)!4$^'
+SECRET_KEY = env.str('SECRET_KEY')
 TG_BOT_TOKEN =env.str('TG_BOT_TOKEN')
+
+HOSTNAME = env.str('HOSTNAME', default='yelena0000.pythonanywhere.com')
+PORT = env.int('PORT', default=8443)
 
 
 DEBUG = True
