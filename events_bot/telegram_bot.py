@@ -1696,11 +1696,7 @@ def setup_dispatcher(dp):
 
 
 def start_bot():
-    TG_BOT_TOKEN = settings.TG_BOT_TOKEN
-    HOSTNAME = settings.HOSTNAME
-    PORT = settings.PORT
-
-    updater = Updater(TG_BOT_TOKEN, use_context=True)
+    updater = Updater(settings.TG_BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
 
     updater.bot.set_my_commands([
@@ -1710,18 +1706,5 @@ def start_bot():
     ])
 
     dp = setup_dispatcher(dp)
-
-    #updater.start_polling()
-
-    # Настройка webhook
-    webhook_url = f"https://{HOSTNAME}/{TG_BOT_TOKEN}"
-
-    updater.start_webhook(
-        listen='0.0.0.0',
-        port=PORT,
-        url_path=TG_BOT_TOKEN,
-        webhook_url=webhook_url,
-    )
-
-    print(f"Bot started via webhook at: {webhook_url}")
+    updater.start_polling()
     updater.idle()

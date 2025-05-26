@@ -14,9 +14,6 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = env.str('SECRET_KEY')
 TG_BOT_TOKEN =env.str('TG_BOT_TOKEN')
 
-HOSTNAME = env.str('HOSTNAME', default='yelena0000.pythonanywhere.com')
-PORT = env.int('PORT', default=8443)
-
 
 DEBUG = True
 ALLOWED_HOSTS = []
